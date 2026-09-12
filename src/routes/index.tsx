@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { PeriodicPalette } from "@/components/PeriodicPalette";
-import { Sandbox, type Controls, type SandboxHandle } from "@/components/Sandbox";
+import { FUSION_IGNITION, Sandbox, type Controls, type SandboxHandle } from "@/components/Sandbox";
 import { BY_SYMBOL } from "@/data/elements";
 
 export const Route = createFileRoute("/")({
