@@ -354,6 +354,16 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         ctx.stroke();
       }
 
+      // heat glow across the chamber
+      if (c.temperature > 400) {
+        const heat = Math.min(1, (c.temperature - 400) / 5000);
+        const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h));
+        g.addColorStop(0, `rgba(255,120,60,${0.05 + heat * 0.16})`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+
       if (c.pressure > 0) {
         const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) / 1.4);
         g.addColorStop(0, `rgba(255,150,90,${0.02 + c.pressure * 0.12})`);
@@ -363,11 +373,13 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
 
       if (c.fusion) {
+        const ignited = c.temperature >= FUSION_IGNITION;
+        const ring = ignited ? "140,231,255" : "127,142,163";
         const rc = { x: w / 2, y: h / 2 };
         const rr = Math.min(w, h) * 0.22;
         const t = performance.now() / 600;
         ctx.save();
-        ctx.strokeStyle = "rgba(140,231,255,0.7)";
+        ctx.strokeStyle = `rgba(${ring},0.7)`;
         ctx.lineWidth = 2;
         ctx.setLineDash([10, 8]);
         ctx.lineDashOffset = -t * 20;
@@ -376,10 +388,11 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         ctx.stroke();
         ctx.setLineDash([]);
         const g = ctx.createRadialGradient(rc.x, rc.y, 0, rc.x, rc.y, rr);
-        g.addColorStop(0, "rgba(140,231,255,0.18)");
-        g.addColorStop(1, "rgba(140,231,255,0)");
+        g.addColorStop(0, `rgba(${ring},${ignited ? 0.18 : 0.06})`);
+        g.addColorStop(1, `rgba(${ring},0)`);
         ctx.fillStyle = g;
         ctx.beginPath();
+
         ctx.arc(rc.x, rc.y, rr, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
