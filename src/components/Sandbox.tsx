@@ -1,11 +1,15 @@
 import { useEffect, useRef } from "react";
 import { BY_SYMBOL, byZ, type ElementInfo } from "@/data/elements";
-import { findReaction, NOBLE_SYMBOLS } from "@/data/reactions";
+import { NOBLE_SYMBOLS, resolveReaction } from "@/data/reactions";
+
+/** Temperature (K) at which the confined plasma is hot enough to fuse nuclei. */
+export const FUSION_IGNITION = 5000;
 
 export type Controls = {
   gravity: number; // 0..2
   pressure: number; // 0..1
   fusion: boolean;
+  temperature: number; // kelvin
 };
 
 export type Particle = {
@@ -28,7 +32,12 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; color
 
 let nextId = 1;
 
-function makeElementParticle(el: ElementInfo, x: number, y: number): Particle {
+function thermalSpeed(temperature: number) {
+  return 20 + Math.sqrt(Math.max(0, temperature)) * 2.2;
+}
+
+function makeElementParticle(el: ElementInfo, x: number, y: number, temperature = 300): Particle {
+  const s = thermalSpeed(temperature);
   return {
     id: nextId++,
     label: el.symbol,
@@ -37,14 +46,15 @@ function makeElementParticle(el: ElementInfo, x: number, y: number): Particle {
     color: el.color,
     x,
     y,
-    vx: (Math.random() - 0.5) * 40,
-    vy: (Math.random() - 0.5) * 40,
+    vx: (Math.random() - 0.5) * s,
+    vy: (Math.random() - 0.5) * s,
     r: 12 + Math.min(14, Math.cbrt(el.z) * 3),
     radioactive: el.radioactive,
     decayIn: el.radioactive ? 3 + Math.random() * 7 : Infinity,
     flash: 1,
   };
 }
+
 
 export type SandboxHandle = {
   spawn: (symbol: string, x?: number, y?: number) => void;
@@ -118,7 +128,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       particles.current = list.filter((p) => p !== a && p !== b);
       if (total <= 118) {
         const el = byZ(total)!;
-        const np = makeElementParticle(el, x, y);
+        const np = makeElementParticle(el, x, y, ctrl.current.temperature);
         np.flash = 1.6;
         particles.current.push(np);
         burst(x, y, 1, "#bff7ff");
@@ -130,7 +140,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const half = Math.max(1, Math.round(total / 2));
         const p1 = byZ(half)!;
         const p2 = byZ(Math.max(1, total - half > 118 ? 118 : total - half))!;
-        particles.current.push(makeElementParticle(p1, x - 20, y), makeElementParticle(p2, x + 20, y));
+        particles.current.push(makeElementParticle(p1, x - 20, y, ctrl.current.temperature), makeElementParticle(p2, x + 20, y, ctrl.current.temperature));
         burst(x, y, 1, "#ff9a4d");
         logRef.current(
           `FISSION · ${a.label} + ${b.label} exceeded Z=118 → ${p1.symbol} + ${p2.symbol}`,
@@ -139,10 +149,26 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
     };
 
+    const coldNotes = new Map<string, number>();
+
     const react = (a: Particle, b: Particle) => {
       if (NOBLE_SYMBOLS.includes(a.label) || NOBLE_SYMBOLS.includes(b.label)) return false;
-      const rx = findReaction(a.label, b.label);
-      if (!rx) return false;
+      const temperature = ctrl.current.temperature;
+      const outcome = resolveReaction(a.label, b.label, temperature);
+      if (outcome.status === "inert") return false;
+      if (outcome.status === "too-cold") {
+        const k = [a.label, b.label].sort().join("+");
+        const now = performance.now();
+        if ((coldNotes.get(k) ?? 0) < now - 6000) {
+          coldNotes.set(k, now);
+          logRef.current(
+            `${a.label} + ${b.label} · no reaction at ${Math.round(temperature)} K · needs ${outcome.reaction.activation} K`,
+            "#7f8ea3",
+          );
+        }
+        return false;
+      }
+      const rx = outcome.reaction;
       const x = (a.x + b.x) / 2;
       const y = (a.y + b.y) / 2;
       const radioactive = a.radioactive || b.radioactive;
@@ -167,6 +193,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       return true;
     };
 
+
     const decay = (p: Particle) => {
       const x = p.x;
       const y = p.y;
@@ -174,9 +201,9 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       if (p.z >= 3) {
         const daughter = byZ(p.z - 2)!;
         particles.current = particles.current.filter((q) => q !== p);
-        const np = makeElementParticle(daughter, x, y);
+        const np = makeElementParticle(daughter, x, y, ctrl.current.temperature);
         np.flash = 1.2;
-        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12));
+        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12, ctrl.current.temperature));
         logRef.current(
           `α DECAY · ${p.label} → ${daughter.symbol} + He (alpha particle)`,
           "#a8ff8a",
@@ -218,6 +245,10 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           p.vx += (dx / d) * f;
           p.vy += (dy / d) * f;
         }
+        // thermal agitation — hotter chamber means faster, more collisions
+        const kick = Math.sqrt(Math.max(0, c.temperature)) * 6 * dt;
+        p.vx += (Math.random() - 0.5) * kick;
+        p.vy += (Math.random() - 0.5) * kick;
         const damp = Math.exp(-0.9 * dt);
         p.vx *= damp;
         p.vy *= damp;
@@ -229,8 +260,9 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         if (p.y > h - p.r) (p.y = h - p.r), (p.vy = -Math.abs(p.vy) * 0.7);
         p.flash = Math.max(0, p.flash - dt * 1.6);
         if (p.decayIn !== Infinity) {
-          p.decayIn -= dt * (1 + c.pressure * 2);
+          p.decayIn -= dt * (1 + c.pressure * 2 + c.temperature / 4000);
         }
+
       }
 
       // decay
@@ -252,11 +284,19 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
 
           const inReactor =
             Math.hypot(a.x - rc.x, a.y - rc.y) < rr && Math.hypot(b.x - rc.x, b.y - rc.y) < rr;
-          if (c.fusion && inReactor && a.z > 0 && b.z > 0) {
+          // chemistry always gets the first say; nuclei only fuse in an ignited core
+          if (react(a, b)) return schedule();
+          if (
+            c.fusion &&
+            inReactor &&
+            a.z > 0 &&
+            b.z > 0 &&
+            c.temperature >= FUSION_IGNITION
+          ) {
             fuse(a, b);
             return schedule();
           }
-          if (react(a, b)) return schedule();
+
 
           // elastic-ish bounce
           const nx = dx / dist;
@@ -314,6 +354,16 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         ctx.stroke();
       }
 
+      // heat glow across the chamber
+      if (c.temperature > 400) {
+        const heat = Math.min(1, (c.temperature - 400) / 5000);
+        const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h));
+        g.addColorStop(0, `rgba(255,120,60,${0.05 + heat * 0.16})`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+
       if (c.pressure > 0) {
         const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) / 1.4);
         g.addColorStop(0, `rgba(255,150,90,${0.02 + c.pressure * 0.12})`);
@@ -323,11 +373,13 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
 
       if (c.fusion) {
+        const ignited = c.temperature >= FUSION_IGNITION;
+        const ring = ignited ? "140,231,255" : "127,142,163";
         const rc = { x: w / 2, y: h / 2 };
         const rr = Math.min(w, h) * 0.22;
         const t = performance.now() / 600;
         ctx.save();
-        ctx.strokeStyle = "rgba(140,231,255,0.7)";
+        ctx.strokeStyle = `rgba(${ring},0.7)`;
         ctx.lineWidth = 2;
         ctx.setLineDash([10, 8]);
         ctx.lineDashOffset = -t * 20;
@@ -336,10 +388,11 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         ctx.stroke();
         ctx.setLineDash([]);
         const g = ctx.createRadialGradient(rc.x, rc.y, 0, rc.x, rc.y, rr);
-        g.addColorStop(0, "rgba(140,231,255,0.18)");
-        g.addColorStop(1, "rgba(140,231,255,0)");
+        g.addColorStop(0, `rgba(${ring},${ignited ? 0.18 : 0.06})`);
+        g.addColorStop(1, `rgba(${ring},0)`);
         ctx.fillStyle = g;
         ctx.beginPath();
+
         ctx.arc(rc.x, rc.y, rr, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
@@ -396,7 +449,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const el = BY_SYMBOL[symbol];
       if (!el) return;
       if (particles.current.length > 90) particles.current.shift();
-      particles.current.push(makeElementParticle(el, x, y));
+      particles.current.push(makeElementParticle(el, x, y, ctrl.current.temperature));
       logRef.current(
         `Placed ${el.name} (${el.symbol})${el.radioactive ? " · radioactive" : ""}`,
         el.color,
