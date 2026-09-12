@@ -284,11 +284,19 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
 
           const inReactor =
             Math.hypot(a.x - rc.x, a.y - rc.y) < rr && Math.hypot(b.x - rc.x, b.y - rc.y) < rr;
-          if (c.fusion && inReactor && a.z > 0 && b.z > 0) {
+          // chemistry always gets the first say; nuclei only fuse in an ignited core
+          if (react(a, b)) return schedule();
+          if (
+            c.fusion &&
+            inReactor &&
+            a.z > 0 &&
+            b.z > 0 &&
+            c.temperature >= FUSION_IGNITION
+          ) {
             fuse(a, b);
             return schedule();
           }
-          if (react(a, b)) return schedule();
+
 
           // elastic-ish bounce
           const nx = dx / dist;
