@@ -1,11 +1,15 @@
 import { useEffect, useRef } from "react";
 import { BY_SYMBOL, byZ, type ElementInfo } from "@/data/elements";
-import { findReaction, NOBLE_SYMBOLS } from "@/data/reactions";
+import { NOBLE_SYMBOLS, resolveReaction } from "@/data/reactions";
+
+/** Temperature (K) at which the confined plasma is hot enough to fuse nuclei. */
+export const FUSION_IGNITION = 5000;
 
 export type Controls = {
   gravity: number; // 0..2
   pressure: number; // 0..1
   fusion: boolean;
+  temperature: number; // kelvin
 };
 
 export type Particle = {
@@ -28,7 +32,12 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; color
 
 let nextId = 1;
 
-function makeElementParticle(el: ElementInfo, x: number, y: number): Particle {
+function thermalSpeed(temperature: number) {
+  return 20 + Math.sqrt(Math.max(0, temperature)) * 2.2;
+}
+
+function makeElementParticle(el: ElementInfo, x: number, y: number, temperature = 300): Particle {
+  const s = thermalSpeed(temperature);
   return {
     id: nextId++,
     label: el.symbol,
@@ -37,14 +46,15 @@ function makeElementParticle(el: ElementInfo, x: number, y: number): Particle {
     color: el.color,
     x,
     y,
-    vx: (Math.random() - 0.5) * 40,
-    vy: (Math.random() - 0.5) * 40,
+    vx: (Math.random() - 0.5) * s,
+    vy: (Math.random() - 0.5) * s,
     r: 12 + Math.min(14, Math.cbrt(el.z) * 3),
     radioactive: el.radioactive,
     decayIn: el.radioactive ? 3 + Math.random() * 7 : Infinity,
     flash: 1,
   };
 }
+
 
 export type SandboxHandle = {
   spawn: (symbol: string, x?: number, y?: number) => void;
