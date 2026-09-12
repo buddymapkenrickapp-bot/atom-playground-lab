@@ -245,6 +245,10 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           p.vx += (dx / d) * f;
           p.vy += (dy / d) * f;
         }
+        // thermal agitation — hotter chamber means faster, more collisions
+        const kick = Math.sqrt(Math.max(0, c.temperature)) * 6 * dt;
+        p.vx += (Math.random() - 0.5) * kick;
+        p.vy += (Math.random() - 0.5) * kick;
         const damp = Math.exp(-0.9 * dt);
         p.vx *= damp;
         p.vy *= damp;
@@ -256,8 +260,9 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         if (p.y > h - p.r) (p.y = h - p.r), (p.vy = -Math.abs(p.vy) * 0.7);
         p.flash = Math.max(0, p.flash - dt * 1.6);
         if (p.decayIn !== Infinity) {
-          p.decayIn -= dt * (1 + c.pressure * 2);
+          p.decayIn -= dt * (1 + c.pressure * 2 + c.temperature / 4000);
         }
+
       }
 
       // decay
