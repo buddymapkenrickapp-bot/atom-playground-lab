@@ -176,7 +176,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         particles.current = particles.current.filter((q) => q !== p);
         const np = makeElementParticle(daughter, x, y);
         np.flash = 1.2;
-        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"], x + 18, y - 12));
+        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12));
         logRef.current(
           `α DECAY · ${p.label} → ${daughter.symbol} + He (alpha particle)`,
           "#a8ff8a",
