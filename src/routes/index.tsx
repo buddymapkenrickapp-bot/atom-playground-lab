@@ -87,9 +87,42 @@ function Index() {
             >
               <span className="block font-display text-sm font-semibold">Fusion Reactor</span>
               <span className="block font-mono text-[10px] text-muted-foreground">
-                {fusion ? "ONLINE · confining to core" : "OFFLINE"}
+                {!fusion
+                  ? "OFFLINE"
+                  : temperature >= FUSION_IGNITION
+                    ? "IGNITED · nuclei fusing in core"
+                    : `CONFINING · needs ${FUSION_IGNITION} K to ignite`}
               </span>
             </button>
+
+            <label className="mt-4 block">
+              <span className="flex items-baseline justify-between font-mono text-[11px] text-muted-foreground">
+                Temperature <span className="text-foreground">{Math.round(temperature)} K</span>
+              </span>
+              <input
+                type="range"
+                min={4}
+                max={10000}
+                step={2}
+                value={temperature}
+                onChange={(e) => setTemperature(Number(e.target.value))}
+                className="mt-1.5 w-full accent-[var(--color-destructive)]"
+              />
+              <span className="mt-1 flex justify-between font-mono text-[9px] text-muted-foreground">
+                <button type="button" onClick={() => setTemperature(77)} className="hover:text-foreground">
+                  cryo 77 K
+                </button>
+                <button type="button" onClick={() => setTemperature(298)} className="hover:text-foreground">
+                  room 298 K
+                </button>
+                <button type="button" onClick={() => setTemperature(1200)} className="hover:text-foreground">
+                  furnace
+                </button>
+                <button type="button" onClick={() => setTemperature(6000)} className="hover:text-foreground">
+                  plasma
+                </button>
+              </span>
+            </label>
 
             <label className="mt-4 block">
               <span className="flex items-baseline justify-between font-mono text-[11px] text-muted-foreground">
@@ -121,10 +154,12 @@ function Index() {
               />
             </label>
             <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
-              Pressure compresses the sample toward the core and accelerates radioactive decay. Fusion
-              merges two elements into Z₁+Z₂.
+              Elements bond by real chemistry whenever the chamber is hot enough — no reactor needed.
+              Noble gases stay inert. The reactor only fuses nuclei once the core passes{" "}
+              {FUSION_IGNITION} K.
             </p>
           </section>
+
 
           <section className="rounded-xl border border-border bg-card p-3">
             <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
