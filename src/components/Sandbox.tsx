@@ -37,6 +37,9 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; color
 type Shockwave = { x: number; y: number; radius: number; life: number; color: string };
 
 let nextId = 1;
+const MAX_PARTICLES = 140;
+const MAX_SPARKS = 260;
+const MAX_SHOCKWAVES = 12;
 
 function thermalSpeed(temperature: number) {
   return 20 + Math.sqrt(Math.max(0, temperature)) * 2.2;
@@ -147,7 +150,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
     const ctx = canvas.getContext("2d")!;
 
     const resize = () => {
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = Math.min(1.5, window.devicePixelRatio || 1);
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       size.current = { w, h };
@@ -160,7 +163,8 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
     ro.observe(wrap);
 
     const burst = (x: number, y: number, energy: number, color: string) => {
-      const n = Math.round(8 + energy * 26);
+      const available = Math.max(0, MAX_SPARKS - sparks.current.length);
+      const n = Math.min(available, Math.round(8 + Math.min(energy, 2.4) * 26));
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
         const s = 40 + Math.random() * 260 * energy;
@@ -173,9 +177,13 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           color,
         });
       }
+      if (sparks.current.length > MAX_SPARKS) {
+        sparks.current.splice(0, sparks.current.length - MAX_SPARKS);
+      }
     };
 
     const shockwave = (x: number, y: number, energy: number, color: string) => {
+      if (shockwaves.current.length >= MAX_SHOCKWAVES) shockwaves.current.shift();
       shockwaves.current.push({ x, y, radius: 10, life: 1, color });
       for (const particle of particles.current) {
         const dx = particle.x - x;
@@ -195,7 +203,17 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         { x, y, radius: 28, life: 0.9, color: "#8ce7ff" },
         { x, y, radius: 56, life: 0.65, color: "#ffb066" },
       );
+      if (shockwaves.current.length > MAX_SHOCKWAVES) {
+        shockwaves.current.splice(0, shockwaves.current.length - MAX_SHOCKWAVES);
+      }
       shockwave(x, y, 2.2, "#bff7ff");
+    };
+
+    const addParticles = (...newParticles: Particle[]) => {
+      particles.current.push(...newParticles);
+      if (particles.current.length > MAX_PARTICLES) {
+        particles.current.splice(0, particles.current.length - MAX_PARTICLES);
+      }
     };
 
     const reactorCenter = () => ({ x: size.current.w / 2, y: size.current.h / 2 });
@@ -243,7 +261,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           flash: 2.8,
           phase: "gas",
         };
-        particles.current.push(helium, neutron);
+        addParticles(helium, neutron);
         nuclearBurst(x, y);
         logRef.current(
           "FUSION · H-2 + H-3 → He-4 + n · 17.6 MeV released",
@@ -262,7 +280,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           ctrl.current.decayTimer,
         );
         np.flash = 1.6;
-        particles.current.push(np);
+        addParticles(np);
         burst(x, y, 1, "#bff7ff");
         logRef.current(
           `FUSION · ${a.label} + ${b.label} → ${el.symbol} (${el.name}, Z=${total})`,
@@ -272,7 +290,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const half = Math.max(1, Math.round(total / 2));
         const p1 = byZ(half)!;
         const p2 = byZ(Math.max(1, total - half > 118 ? 118 : total - half))!;
-        particles.current.push(
+        addParticles(
           makeElementParticle(p1, x - 20, y, ctrl.current.temperature, ctrl.current.decayTimer),
           makeElementParticle(p2, x + 20, y, ctrl.current.temperature, ctrl.current.decayTimer),
         );
@@ -302,7 +320,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       for (const [index, product] of products.entries()) {
         if ("neutrons" in product) {
           for (let count = 0; count < product.neutrons; count++) {
-            particles.current.push(
+            addParticles(
               makeEmissionParticle("n", "free neutron", "#fff1a8", x, y, 420 + count * 80, (count - 1) * 130),
             );
           }
@@ -320,7 +338,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           );
           fragment.vx += index === 0 ? -260 : 260;
           fragment.flash = 2.4;
-          particles.current.push(fragment);
+          addParticles(fragment);
         }
       }
 
@@ -376,7 +394,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
                 ? "aqueous"
                 : rx.phase;
 
-        particles.current.push({
+        addParticles({
           id: nextId++,
           label: product,
           name: products.length > 1 ? `${rx.name} product` : rx.name,
@@ -430,7 +448,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           `${daughter.symbol}-${mass - 4}`,
         );
         np.flash = 1.2;
-        particles.current.push(
+        addParticles(
           np,
           makeElementParticle(
             BY_SYMBOL["He"]!,
@@ -450,7 +468,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const daughter = byZ(p.z + 1);
         if (!daughter) return;
         particles.current = particles.current.filter((q) => q !== p);
-        particles.current.push(
+        addParticles(
           makeElementParticle(daughter, x, y, ctrl.current.temperature, ctrl.current.decayTimer, mass, `${daughter.symbol}-${mass}`),
           makeEmissionParticle("β⁻", "electron", "#a8e7ff", x + 15, y, 380, -80),
           makeEmissionParticle("ν̄", "electron antineutrino", "#d8d8ff", x + 20, y + 10, 300, 60),
@@ -463,7 +481,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const daughter = byZ(p.z - 1);
         if (!daughter) return;
         particles.current = particles.current.filter((q) => q !== p);
-        particles.current.push(
+        addParticles(
           makeElementParticle(daughter, x, y, ctrl.current.temperature, ctrl.current.decayTimer, mass, `${daughter.symbol}-${mass}`),
           makeEmissionParticle("β⁺", "positron", "#ffb0d0", x + 15, y, 340, -60),
           makeEmissionParticle("ν", "electron neutrino", "#d8d8ff", x + 20, y + 10, 280, 60),
@@ -745,7 +763,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const el = BY_SYMBOL[symbol];
       if (!el) return;
       if (particles.current.length > 90) particles.current.shift();
-      particles.current.push(
+      addParticles(
         makeElementParticle(
           el,
           x,
