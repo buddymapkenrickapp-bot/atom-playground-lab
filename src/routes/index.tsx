@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { PeriodicPalette } from "@/components/PeriodicPalette";
 import { FUSION_IGNITION, Sandbox, type Controls, type SandboxHandle } from "@/components/Sandbox";
 import { BY_SYMBOL } from "@/data/elements";
+import { isotopeElement, isotopeForLabel } from "@/data/isotopes";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -34,17 +35,23 @@ function Index() {
   const [gravity, setGravity] = useState(0.35);
   const [pressure, setPressure] = useState(0);
   const [fusion, setFusion] = useState(false);
+  const [decayTimer, setDecayTimer] = useState(30);
   const [temperature, setTemperature] = useState(298);
   const [log, setLog] = useState<LogEntry[]>([]);
   const handleRef = useRef<SandboxHandle | null>(null);
 
-  const controls: Controls = { gravity, pressure, fusion, temperature };
+  const controls: Controls = { gravity, pressure, fusion, temperature, decayTimer };
 
 
   const pushLog = (text: string, color: string) =>
     setLog((prev) => [{ id: logId++, text, color }, ...prev].slice(0, 60));
 
-  const selectedInfo = selected ? BY_SYMBOL[selected] : undefined;
+  const selectedIsotope = selected ? isotopeForLabel(selected) : undefined;
+  const selectedInfo = selectedIsotope
+    ? isotopeElement(selectedIsotope.label)
+    : selected
+      ? BY_SYMBOL[selected]
+      : undefined;
 
   return (
     <div className="flex h-screen flex-col gap-3 bg-background p-3 text-foreground">
@@ -153,6 +160,21 @@ function Index() {
                 className="mt-1.5 w-full accent-[var(--color-destructive)]"
               />
             </label>
+
+            <label className="mt-3 block">
+              <span className="flex items-baseline justify-between font-mono text-[11px] text-muted-foreground">
+                Radioactive decay <span className="text-foreground">{decayTimer === 0 ? "paused" : `${decayTimer}s`}</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={120}
+                step={1}
+                value={decayTimer}
+                onChange={(e) => setDecayTimer(Number(e.target.value))}
+                className="mt-1.5 w-full accent-[var(--color-primary)]"
+              />
+            </label>
             <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
               Elements bond by real chemistry whenever the chamber is hot enough — no reactor needed.
               Noble gases stay inert. The reactor only fuses nuclei once the core passes{" "}
@@ -174,13 +196,15 @@ function Index() {
                     backgroundColor: `color-mix(in oklab, ${selectedInfo.color} 16%, transparent)`,
                   }}
                 >
-                  {selectedInfo.symbol}
+                  {selectedIsotope?.label ?? selectedInfo.symbol}
                 </span>
                 <div className="text-xs">
                   <div className="font-display text-sm">{selectedInfo.name}</div>
                   <div className="font-mono text-[10px] text-muted-foreground">
                     Z={selectedInfo.z}
+                    {selectedIsotope ? ` · A=${selectedIsotope.mass}` : ""}
                     {selectedInfo.radioactive ? " · radioactive ☢" : ""}
+                    {selectedIsotope?.halfLife ? ` · t½ ${selectedIsotope.halfLife}` : ""}
                   </div>
                 </div>
                 <button

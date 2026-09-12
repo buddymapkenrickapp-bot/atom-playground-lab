@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { BY_SYMBOL, byZ, type ElementInfo } from "@/data/elements";
-import { NOBLE_SYMBOLS, resolveReaction } from "@/data/reactions";
+import { canFormFromParticleSet, NOBLE_SYMBOLS, resolveReaction } from "@/data/reactions";
+import { isotopeForLabel } from "@/data/isotopes";
 
 /** Temperature (K) at which the confined plasma is hot enough to fuse nuclei. */
 export const FUSION_IGNITION = 5000;
@@ -10,6 +11,7 @@ export type Controls = {
   pressure: number; // 0..1
   fusion: boolean;
   temperature: number; // kelvin
+  decayTimer: number; // seconds; 0 pauses radioactive decay
 };
 
 export type Particle = {
@@ -24,11 +26,15 @@ export type Particle = {
   vy: number;
   r: number;
   radioactive: boolean;
+  isotopeMass?: number | undefined;
+  isotopeLabel?: string | undefined;
   decayIn: number;
   flash: number;
+  phase: "solid" | "liquid" | "gas" | "aqueous";
 };
 
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; color: string };
+type Shockwave = { x: number; y: number; radius: number; life: number; color: string };
 
 let nextId = 1;
 
@@ -36,7 +42,15 @@ function thermalSpeed(temperature: number) {
   return 20 + Math.sqrt(Math.max(0, temperature)) * 2.2;
 }
 
-function makeElementParticle(el: ElementInfo, x: number, y: number, temperature = 300): Particle {
+function makeElementParticle(
+  el: ElementInfo,
+  x: number,
+  y: number,
+  temperature = 300,
+  decaySeconds = 30,
+  isotopeMass?: number,
+  isotopeLabel?: string,
+): Particle {
   const s = thermalSpeed(temperature);
   return {
     id: nextId++,
@@ -50,9 +64,21 @@ function makeElementParticle(el: ElementInfo, x: number, y: number, temperature 
     vy: (Math.random() - 0.5) * s,
     r: 12 + Math.min(14, Math.cbrt(el.z) * 3),
     radioactive: el.radioactive,
-    decayIn: el.radioactive ? 3 + Math.random() * 7 : Infinity,
+    isotopeMass,
+    isotopeLabel,
+    decayIn: el.radioactive
+      ? (decaySeconds > 0 ? decaySeconds * (0.7 + Math.random() * 0.6) : Infinity)
+      : Infinity,
     flash: 1,
+    phase: "solid",
   };
+}
+
+function waterPhase(temperature: number, pressure: number): Particle["phase"] {
+  const boilingPoint = 373 + pressure * 700;
+  if (temperature >= boilingPoint) return "gas";
+  if (temperature < 273) return "solid";
+  return "liquid";
 }
 
 
@@ -74,6 +100,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particles = useRef<Particle[]>([]);
   const sparks = useRef<Spark[]>([]);
+  const shockwaves = useRef<Shockwave[]>([]);
   const ctrl = useRef(controls);
   const sel = useRef(selected);
   const size = useRef({ w: 800, h: 480 });
@@ -117,6 +144,18 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
     };
 
+    const shockwave = (x: number, y: number, energy: number, color: string) => {
+      shockwaves.current.push({ x, y, radius: 10, life: 1, color });
+      for (const particle of particles.current) {
+        const dx = particle.x - x;
+        const dy = particle.y - y;
+        const distance = Math.hypot(dx, dy) || 1;
+        const impulse = (energy * 420) / Math.max(40, distance);
+        particle.vx += (dx / distance) * impulse;
+        particle.vy += (dy / distance) * impulse;
+      }
+    };
+
     const reactorCenter = () => ({ x: size.current.w / 2, y: size.current.h / 2 });
     const reactorRadius = () => Math.min(size.current.w, size.current.h) * 0.22;
 
@@ -128,7 +167,13 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       particles.current = list.filter((p) => p !== a && p !== b);
       if (total <= 118) {
         const el = byZ(total)!;
-        const np = makeElementParticle(el, x, y, ctrl.current.temperature);
+        const np = makeElementParticle(
+          el,
+          x,
+          y,
+          ctrl.current.temperature,
+          ctrl.current.decayTimer,
+        );
         np.flash = 1.6;
         particles.current.push(np);
         burst(x, y, 1, "#bff7ff");
@@ -140,7 +185,10 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const half = Math.max(1, Math.round(total / 2));
         const p1 = byZ(half)!;
         const p2 = byZ(Math.max(1, total - half > 118 ? 118 : total - half))!;
-        particles.current.push(makeElementParticle(p1, x - 20, y, ctrl.current.temperature), makeElementParticle(p2, x + 20, y, ctrl.current.temperature));
+        particles.current.push(
+          makeElementParticle(p1, x - 20, y, ctrl.current.temperature, ctrl.current.decayTimer),
+          makeElementParticle(p2, x + 20, y, ctrl.current.temperature, ctrl.current.decayTimer),
+        );
         burst(x, y, 1, "#ff9a4d");
         logRef.current(
           `FISSION · ${a.label} + ${b.label} exceeded Z=118 → ${p1.symbol} + ${p2.symbol}`,
@@ -171,28 +219,54 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const rx = outcome.reaction;
       const x = (a.x + b.x) / 2;
       const y = (a.y + b.y) / 2;
+      const localPool = [a, b, ...particles.current.filter((p) => p !== a && p !== b && Math.hypot(p.x - x, p.y - y) < 90)];
+      if (!canFormFromParticleSet(localPool, rx.formula)) {
+        return false;
+      }
       const radioactive = a.radioactive || b.radioactive;
       particles.current = particles.current.filter((p) => p !== a && p !== b);
-      particles.current.push({
-        id: nextId++,
-        label: rx.formula,
-        name: rx.name,
-        z: 0,
-        color: rx.color,
-        x,
-        y,
-        vx: (a.vx + b.vx) / 2,
-        vy: (a.vy + b.vy) / 2,
-        r: Math.min(34, Math.hypot(a.r, b.r)),
-        radioactive,
-        decayIn: radioactive ? 5 + Math.random() * 8 : Infinity,
-        flash: 1 + rx.energy,
-      });
+
+      const products = rx.formula.split(" + ");
+      for (const [index, product] of products.entries()) {
+        const phase =
+          product === "H₂O"
+            ? waterPhase(temperature, ctrl.current.pressure)
+            : rx.phase === "mixed"
+              ? product.includes("H₂") || product.includes("CO₂")
+                ? "gas"
+                : "liquid"
+              : rx.phase === "aqueous"
+                ? "aqueous"
+                : rx.phase;
+
+        particles.current.push({
+          id: nextId++,
+          label: product,
+          name: products.length > 1 ? `${rx.name} product` : rx.name,
+          z: 0,
+          color: rx.color,
+          x: x + (index - (products.length - 1) / 2) * 14,
+          y,
+          vx: (a.vx + b.vx) / 2 + (index ? 18 : -18),
+          vy: (a.vy + b.vy) / 2 - (phase === "gas" ? 22 : 0),
+          r: Math.min(34, Math.hypot(a.r, b.r)),
+          radioactive,
+          decayIn:
+            radioactive && ctrl.current.decayTimer > 0
+              ? ctrl.current.decayTimer * (0.7 + Math.random() * 0.6)
+              : Infinity,
+          flash: 1 + rx.energy,
+          phase,
+        });
+      }
+
       burst(x, y, rx.energy, rx.color);
+      if (rx.effect === "explosion" || (rx.effect === "combustion" && rx.energy >= 0.9)) {
+        shockwave(x, y, rx.energy, rx.color);
+      }
       logRef.current(`${a.label} + ${b.label} → ${rx.formula} · ${rx.name}`, rx.color);
       return true;
     };
-
 
     const decay = (p: Particle) => {
       const x = p.x;
@@ -201,9 +275,18 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       if (p.z >= 3) {
         const daughter = byZ(p.z - 2)!;
         particles.current = particles.current.filter((q) => q !== p);
-        const np = makeElementParticle(daughter, x, y, ctrl.current.temperature);
+        const np = makeElementParticle(
+          daughter,
+          x,
+          y,
+          ctrl.current.temperature,
+          ctrl.current.decayTimer,
+        );
         np.flash = 1.2;
-        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12, ctrl.current.temperature));
+        particles.current.push(
+          np,
+          makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12, ctrl.current.temperature, ctrl.current.decayTimer),
+        );
         logRef.current(
           `α DECAY · ${p.label} → ${daughter.symbol} + He (alpha particle)`,
           "#a8ff8a",
@@ -226,8 +309,9 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const rc = reactorCenter();
       const rr = reactorRadius();
 
-      // physics
       for (const p of list) {
+        if (p.label === "H₂O") p.phase = waterPhase(c.temperature, c.pressure);
+        if (p.phase === "gas") p.vy -= 18 * dt;
         p.vy += c.gravity * 420 * dt;
         if (c.pressure > 0) {
           const dx = w / 2 - p.x;
@@ -245,7 +329,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           p.vx += (dx / d) * f;
           p.vy += (dy / d) * f;
         }
-        // thermal agitation — hotter chamber means faster, more collisions
+
         const kick = Math.sqrt(Math.max(0, c.temperature)) * 6 * dt;
         p.vx += (Math.random() - 0.5) * kick;
         p.vy += (Math.random() - 0.5) * kick;
@@ -259,18 +343,15 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         if (p.y < p.r) (p.y = p.r), (p.vy = Math.abs(p.vy) * 0.7);
         if (p.y > h - p.r) (p.y = h - p.r), (p.vy = -Math.abs(p.vy) * 0.7);
         p.flash = Math.max(0, p.flash - dt * 1.6);
-        if (p.decayIn !== Infinity) {
-          p.decayIn -= dt * (1 + c.pressure * 2 + c.temperature / 4000);
+        if (p.decayIn !== Infinity && c.decayTimer > 0) {
+          p.decayIn -= dt * (1 + c.pressure * 2 + c.temperature / 4000) * (30 / Math.max(1, c.decayTimer));
         }
-
       }
 
-      // decay
       for (const p of [...particles.current]) {
         if (p.decayIn !== Infinity && p.decayIn <= 0) decay(p);
       }
 
-      // collisions + reactions
       const cur = particles.current;
       for (let i = 0; i < cur.length; i++) {
         for (let j = i + 1; j < cur.length; j++) {
@@ -284,21 +365,12 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
 
           const inReactor =
             Math.hypot(a.x - rc.x, a.y - rc.y) < rr && Math.hypot(b.x - rc.x, b.y - rc.y) < rr;
-          // chemistry always gets the first say; nuclei only fuse in an ignited core
           if (react(a, b)) return schedule();
-          if (
-            c.fusion &&
-            inReactor &&
-            a.z > 0 &&
-            b.z > 0 &&
-            c.temperature >= FUSION_IGNITION
-          ) {
+          if (c.fusion && inReactor && a.z > 0 && b.z > 0 && c.temperature >= FUSION_IGNITION) {
             fuse(a, b);
             return schedule();
           }
 
-
-          // elastic-ish bounce
           const nx = dx / dist;
           const ny = dy / dist;
           const overlap = min - dist;
@@ -317,7 +389,6 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         }
       }
 
-      // sparks
       sparks.current = sparks.current.filter((s) => {
         s.life -= dt;
         s.x += s.vx * dt;
@@ -325,6 +396,12 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         s.vy += 120 * dt;
         s.vx *= 0.98;
         return s.life > 0;
+      });
+
+      shockwaves.current = shockwaves.current.filter((wave) => {
+        wave.life -= dt * 2.4;
+        wave.radius += (220 + wave.radius) * dt;
+        return wave.life > 0;
       });
 
       draw();
@@ -412,13 +489,23 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
       ctx.globalAlpha = 1;
 
+      for (const wave of shockwaves.current) {
+        ctx.globalAlpha = Math.max(0, wave.life);
+        ctx.strokeStyle = wave.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
       for (const p of particles.current) {
         const glow = 14 + p.flash * 26;
         ctx.save();
         ctx.shadowColor = p.color;
         ctx.shadowBlur = glow;
         ctx.fillStyle = p.color;
-        ctx.globalAlpha = 0.92;
+        ctx.globalAlpha = p.phase === "gas" ? 0.45 : p.phase === "aqueous" ? 0.72 : 0.92;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fill();
@@ -434,10 +521,11 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         }
 
         ctx.fillStyle = "#05060a";
-        ctx.font = `600 ${p.label.length > 3 ? 10 : 13}px ui-monospace, monospace`;
+        const displayLabel = p.isotopeLabel ?? p.label;
+        ctx.font = `600 ${displayLabel.length > 3 ? 10 : 13}px ui-monospace, monospace`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(p.label, p.x, p.y);
+        ctx.fillText(displayLabel, p.x, p.y);
       }
     };
 
@@ -445,13 +533,25 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       raf = requestAnimationFrame(frame);
     };
 
-    const spawnAt = (symbol: string, x: number, y: number) => {
+    const spawnAt = (selection: string, x: number, y: number) => {
+      const isotope = isotopeForLabel(selection);
+      const symbol = isotope?.symbol ?? selection;
       const el = BY_SYMBOL[symbol];
       if (!el) return;
       if (particles.current.length > 90) particles.current.shift();
-      particles.current.push(makeElementParticle(el, x, y, ctrl.current.temperature));
+      particles.current.push(
+        makeElementParticle(
+          el,
+          x,
+          y,
+          ctrl.current.temperature,
+          ctrl.current.decayTimer,
+          isotope?.mass,
+          isotope?.label,
+        ),
+      );
       logRef.current(
-        `Placed ${el.name} (${el.symbol})${el.radioactive ? " · radioactive" : ""}`,
+        `Placed ${isotope?.label ?? el.name} (${el.name})${el.radioactive ? " · radioactive" : ""}`,
         el.color,
       );
     };
@@ -462,6 +562,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       clear: () => {
         particles.current = [];
         sparks.current = [];
+        shockwaves.current = [];
         logRef.current("Chamber evacuated", "#8ce7ff");
       },
       count: () => particles.current.length,

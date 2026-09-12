@@ -94,6 +94,8 @@ export type PredictedBond = {
   color: string;
   /** kelvin needed before the pair will react at all */
   activation: number;
+  effect: "synthesis" | "oxidation" | "combustion";
+  phase: "solid" | "liquid" | "gas" | "aqueous" | "mixed";
 };
 
 function mix(colorA: string, colorB: string) {
@@ -127,16 +129,10 @@ export function predictBond(symA: string, symB: string): PredictedBond | undefin
 
   if (a.symbol === b.symbol) return undefined;
 
-  // metal + metal: no electron transfer possible, only a solid solution (alloy)
+  // Metal-metal alloying is a bulk manufacturing process, not a binary
+  // molecular reaction. Keep it inert unless a specific alloy is curated.
   if (metalA && metalB) {
-    return {
-      formula: `${a.symbol}${b.symbol}`,
-      name: `${a.name}–${b.name} alloy`,
-      kind: "alloy",
-      energy: 0.15,
-      color: mix(a.color, b.color),
-      activation: 900,
-    };
+    return undefined;
   }
 
   // nonmetal + nonmetal with almost identical electronegativity: no driving force
@@ -158,5 +154,7 @@ export function predictBond(symA: string, symB: string): PredictedBond | undefin
     color: mix(first.color, second.color),
     // eager pairs ignite near room temperature, sluggish ones need real heat
     activation: Math.round(280 + (1 - react) * 900 + (ionic ? 0 : 220)),
+    effect: ionic ? "synthesis" : "oxidation",
+    phase: ionic ? "solid" : "gas",
   };
 }

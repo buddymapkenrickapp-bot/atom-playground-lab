@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, ELEMENTS, type Category } from "@/data/elements";
+import { ISOTOPES } from "@/data/isotopes";
 import { useMemo, useState } from "react";
 
 type Props = {
@@ -16,9 +17,23 @@ const GROUPS: { key: string; label: string; test: (c: Category, radioactive: boo
 export function PeriodicPalette({ selected, onSelect }: Props) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const isotopeMode = filter === "isotopes";
 
-  const items = useMemo(() => {
-    const group = GROUPS.find((g) => g.key === filter)!;
+  const isotopeItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return ISOTOPES.filter(
+      (isotope) =>
+        !q ||
+        isotope.label.toLowerCase().startsWith(q) ||
+        isotope.symbol.toLowerCase().startsWith(q) ||
+        isotope.element.toLowerCase().includes(q) ||
+        String(isotope.mass) === q,
+    );
+  }, [query]);
+
+  const elementItems = useMemo(() => {
+    const group = GROUPS.find((g) => g.key === filter);
+    if (!group) return [];
     const q = query.trim().toLowerCase();
     return ELEMENTS.filter(
       (e) =>
@@ -43,6 +58,16 @@ export function PeriodicPalette({ selected, onSelect }: Props) {
             {g.label}
           </button>
         ))}
+        <button
+          onClick={() => setFilter("isotopes")}
+          className={`rounded-md border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors ${
+            isotopeMode
+              ? "border-primary bg-primary/15 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Isotopes
+        </button>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -52,7 +77,31 @@ export function PeriodicPalette({ selected, onSelect }: Props) {
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5 overflow-y-auto pr-1">
-        {items.map((e) => (
+        {isotopeMode
+          ? isotopeItems.map((isotope) => {
+              const element = ELEMENTS.find((entry) => entry.symbol === isotope.symbol)!;
+              return (
+                <button
+                  key={isotope.label}
+                  draggable
+                  onDragStart={(ev) => ev.dataTransfer.setData("text/plain", isotope.label)}
+                  onClick={() => onSelect(isotope.label)}
+                  title={`${isotope.label} · ${isotope.element}${isotope.radioactive ? ` · radioactive${isotope.halfLife ? ` · half-life ${isotope.halfLife}` : ""}` : " · stable"}`}
+                  className={`group relative flex aspect-square flex-col items-center justify-center rounded-md border transition-transform hover:-translate-y-0.5 ${
+                    selected === isotope.label ? "border-primary ring-1 ring-primary" : "border-border"
+                  }`}
+                  style={{ backgroundColor: `color-mix(in oklab, ${element.color} 14%, transparent)` }}
+                >
+                  <span className="absolute left-1 top-0.5 font-mono text-[8px] text-muted-foreground">{element.z}</span>
+                  {isotope.radioactive && <span className="absolute right-1 top-0.5 font-mono text-[8px] text-[#a8ff8a]">☢</span>}
+                  <span className="font-mono text-sm font-semibold" style={{ color: element.color }}>
+                    {isotope.symbol}
+                  </span>
+                  <span className="font-mono text-[10px] text-foreground">-{isotope.mass}</span>
+                </button>
+              );
+            })
+          : elementItems.map((e) => (
           <button
             key={e.z}
             draggable
