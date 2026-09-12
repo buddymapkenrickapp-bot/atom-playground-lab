@@ -73,6 +73,27 @@ export function isotopeForLabel(label: string): IsotopeInfo | undefined {
   return ISOTOPES_BY_LABEL[label];
 }
 
+export function defaultIsotopeForSymbol(symbol: string): IsotopeInfo | undefined {
+  return ISOTOPES.find((isotope) => isotope.symbol === symbol);
+}
+
+export type DecayMode = "alpha" | "beta-minus" | "beta-plus";
+
+export function nuclearState(symbol: string, mass: number) {
+  const element = ELEMENTS.find((candidate) => candidate.symbol === symbol);
+  const z = element?.z ?? 0;
+  return { mass, z, neutrons: Math.max(0, mass - z), neutronProtonRatio: z ? (mass - z) / z : 0 };
+}
+
+/** Selects the dominant educational decay path from the isotope's N/Z imbalance. */
+export function decayMode(symbol: string, mass: number): DecayMode {
+  const state = nuclearState(symbol, mass);
+  if (state.z >= 84 || mass >= 210) return "alpha";
+
+  const targetRatio = state.z <= 20 ? 1 : 1.5;
+  return state.neutronProtonRatio > targetRatio ? "beta-minus" : "beta-plus";
+}
+
 export function isotopeElement(label: string): ElementInfo | undefined {
   const isotope = isotopeForLabel(label);
   return isotope ? ELEMENTS.find((element) => element.symbol === isotope.symbol) : undefined;

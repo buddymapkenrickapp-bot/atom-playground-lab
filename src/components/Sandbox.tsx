@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { BY_SYMBOL, byZ, type ElementInfo } from "@/data/elements";
 import { canFormFromParticleSet, NOBLE_SYMBOLS, resolveReaction } from "@/data/reactions";
-import { isotopeForLabel } from "@/data/isotopes";
+import { decayMode, defaultIsotopeForSymbol, isotopeForLabel } from "@/data/isotopes";
 
 /** Temperature (K) at which the confined plasma is hot enough to fuse nuclei. */
 export const FUSION_IGNITION = 5000;
@@ -52,6 +52,9 @@ function makeElementParticle(
   isotopeLabel?: string,
 ): Particle {
   const s = thermalSpeed(temperature);
+  const defaultMass = defaultIsotopeForSymbol(el.symbol)?.mass;
+  const actualMass = isotopeMass ?? defaultMass;
+  const isotopeRadioactive = isotopeLabel ? isotopeForLabel(isotopeLabel)?.radioactive : undefined;
   return {
     id: nextId++,
     label: el.symbol,
@@ -63,14 +66,42 @@ function makeElementParticle(
     vx: (Math.random() - 0.5) * s,
     vy: (Math.random() - 0.5) * s,
     r: 12 + Math.min(14, Math.cbrt(el.z) * 3),
-    radioactive: el.radioactive,
-    isotopeMass,
+    radioactive: isotopeRadioactive ?? el.radioactive,
+    isotopeMass: actualMass,
     isotopeLabel,
     decayIn: el.radioactive
       ? (decaySeconds > 0 ? decaySeconds * (0.7 + Math.random() * 0.6) : Infinity)
       : Infinity,
     flash: 1,
     phase: "solid",
+  };
+}
+
+function makeEmissionParticle(
+  label: string,
+  name: string,
+  color: string,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+): Particle {
+  return {
+    id: nextId++,
+    label,
+    name,
+    z: 0,
+    color,
+    x,
+    y,
+    vx,
+    vy,
+    r: 7,
+    radioactive: false,
+    isotopeLabel: label,
+    decayIn: Infinity,
+    flash: 1.8,
+    phase: "gas",
   };
 }
 
@@ -156,6 +187,17 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
     };
 
+    const nuclearBurst = (x: number, y: number) => {
+      burst(x, y, 2.4, "#e9ffff");
+      burst(x, y, 1.4, "#8ce7ff");
+      shockwaves.current.push(
+        { x, y, radius: 8, life: 1.2, color: "#ffffff" },
+        { x, y, radius: 28, life: 0.9, color: "#8ce7ff" },
+        { x, y, radius: 56, life: 0.65, color: "#ffb066" },
+      );
+      shockwave(x, y, 2.2, "#bff7ff");
+    };
+
     const reactorCenter = () => ({ x: size.current.w / 2, y: size.current.h / 2 });
     const reactorRadius = () => Math.min(size.current.w, size.current.h) * 0.22;
 
@@ -165,6 +207,51 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const x = (a.x + b.x) / 2;
       const y = (a.y + b.y) / 2;
       particles.current = list.filter((p) => p !== a && p !== b);
+
+      const deuteriumTritium =
+        a.label === "H" &&
+        b.label === "H" &&
+        new Set([a.isotopeMass, b.isotopeMass]).size === 2 &&
+        [a.isotopeMass, b.isotopeMass].includes(2) &&
+        [a.isotopeMass, b.isotopeMass].includes(3);
+
+      if (deuteriumTritium) {
+        const helium = makeElementParticle(
+          BY_SYMBOL["He"]!,
+          x - 24,
+          y,
+          ctrl.current.temperature,
+          ctrl.current.decayTimer,
+          4,
+          "He-4",
+        );
+        helium.flash = 2.6;
+        const neutron: Particle = {
+          id: nextId++,
+          label: "n",
+          name: "High-energy neutron",
+          z: 0,
+          color: "#fff1a8",
+          x: x + 24,
+          y,
+          vx: 520,
+          vy: (Math.random() - 0.5) * 180,
+          r: 9,
+          radioactive: false,
+          isotopeLabel: "n",
+          decayIn: Infinity,
+          flash: 2.8,
+          phase: "gas",
+        };
+        particles.current.push(helium, neutron);
+        nuclearBurst(x, y);
+        logRef.current(
+          "FUSION · H-2 + H-3 → He-4 + n · 17.6 MeV released",
+          "#ffffff",
+        );
+        return;
+      }
+
       if (total <= 118) {
         const el = byZ(total)!;
         const np = makeElementParticle(
@@ -197,12 +284,62 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
     };
 
+    const fission = (heavy: Particle, neutron: Particle) => {
+      const mass = heavy.isotopeMass;
+      const x = (heavy.x + neutron.x) / 2;
+      const y = (heavy.y + neutron.y) / 2;
+      if (!mass || (heavy.label !== "U" && heavy.label !== "Pu")) return false;
+
+      const uranium = heavy.label === "U" && mass === 235;
+      const plutonium = heavy.label === "Pu" && mass === 239;
+      if (!uranium && !plutonium) return false;
+
+      particles.current = particles.current.filter((particle) => particle !== heavy && particle !== neutron);
+      const products = uranium
+        ? [{ symbol: "Ba", mass: 141 }, { symbol: "Kr", mass: 92 }, { neutrons: 3 }]
+        : [{ symbol: "Xe", mass: 140 }, { symbol: "Zr", mass: 98 }, { neutrons: 2 }];
+
+      for (const [index, product] of products.entries()) {
+        if ("neutrons" in product) {
+          for (let count = 0; count < product.neutrons; count++) {
+            particles.current.push(
+              makeEmissionParticle("n", "free neutron", "#fff1a8", x, y, 420 + count * 80, (count - 1) * 130),
+            );
+          }
+        } else {
+          const element = BY_SYMBOL[product.symbol];
+          if (!element) continue;
+          const fragment = makeElementParticle(
+            element,
+            x + (index === 0 ? -24 : 24),
+            y,
+            ctrl.current.temperature,
+            ctrl.current.decayTimer,
+            product.mass,
+            `${product.symbol}-${product.mass}`,
+          );
+          fragment.vx += index === 0 ? -260 : 260;
+          fragment.flash = 2.4;
+          particles.current.push(fragment);
+        }
+      }
+
+      nuclearBurst(x, y);
+      logRef.current(
+        uranium
+          ? "FISSION · U-235 + n → Ba-141 + Kr-92 + 3n · ~200 MeV released"
+          : "FISSION · Pu-239 + n → Xe-140 + Zr-98 + 2n · ~210 MeV released",
+        "#ffb066",
+      );
+      return true;
+    };
+
     const coldNotes = new Map<string, number>();
 
     const react = (a: Particle, b: Particle) => {
       if (NOBLE_SYMBOLS.includes(a.label) || NOBLE_SYMBOLS.includes(b.label)) return false;
       const temperature = ctrl.current.temperature;
-      const outcome = resolveReaction(a.label, b.label, temperature);
+      const outcome = resolveReaction(a.label, b.label, temperature, a.isotopeMass, b.isotopeMass);
       if (outcome.status === "inert") return false;
       if (outcome.status === "too-cold") {
         const k = [a.label, b.label].sort().join("+");
@@ -271,9 +408,17 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
     const decay = (p: Particle) => {
       const x = p.x;
       const y = p.y;
-      burst(x, y, 0.7, "#a8ff8a");
-      if (p.z >= 3) {
-        const daughter = byZ(p.z - 2)!;
+      const mass = p.isotopeMass;
+      if (!mass || p.z < 1) {
+        particles.current = particles.current.filter((q) => q !== p);
+        return;
+      }
+
+      const mode = decayMode(p.label, mass);
+      burst(x, y, mode === "alpha" ? 1.4 : 0.8, mode === "alpha" ? "#a8ff8a" : "#bff7ff");
+      if (mode === "alpha" && p.z >= 3 && mass >= 4) {
+        const daughter = byZ(p.z - 2);
+        if (!daughter) return;
         particles.current = particles.current.filter((q) => q !== p);
         const np = makeElementParticle(
           daughter,
@@ -281,19 +426,55 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
           y,
           ctrl.current.temperature,
           ctrl.current.decayTimer,
+          mass - 4,
+          `${daughter.symbol}-${mass - 4}`,
         );
         np.flash = 1.2;
         particles.current.push(
           np,
-          makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12, ctrl.current.temperature, ctrl.current.decayTimer),
+          makeElementParticle(
+            BY_SYMBOL["He"]!,
+            x + 18,
+            y - 12,
+            ctrl.current.temperature,
+            ctrl.current.decayTimer,
+            4,
+            "He-4",
+          ),
         );
         logRef.current(
-          `α DECAY · ${p.label} → ${daughter.symbol} + He (alpha particle)`,
+          `α DECAY · ${p.isotopeLabel ?? `${p.label}-${mass}`} → ${daughter.symbol}-${mass - 4} + He-4`,
           "#a8ff8a",
+        );
+      } else if (mode === "beta-minus" && p.z < 118) {
+        const daughter = byZ(p.z + 1);
+        if (!daughter) return;
+        particles.current = particles.current.filter((q) => q !== p);
+        particles.current.push(
+          makeElementParticle(daughter, x, y, ctrl.current.temperature, ctrl.current.decayTimer, mass, `${daughter.symbol}-${mass}`),
+          makeEmissionParticle("β⁻", "electron", "#a8e7ff", x + 15, y, 380, -80),
+          makeEmissionParticle("ν̄", "electron antineutrino", "#d8d8ff", x + 20, y + 10, 300, 60),
+        );
+        logRef.current(
+          `β⁻ DECAY · ${p.isotopeLabel ?? `${p.label}-${mass}`} → ${daughter.symbol}-${mass} + e⁻ + ν̄`,
+          "#a8e7ff",
+        );
+      } else if (mode === "beta-plus" && p.z > 1) {
+        const daughter = byZ(p.z - 1);
+        if (!daughter) return;
+        particles.current = particles.current.filter((q) => q !== p);
+        particles.current.push(
+          makeElementParticle(daughter, x, y, ctrl.current.temperature, ctrl.current.decayTimer, mass, `${daughter.symbol}-${mass}`),
+          makeEmissionParticle("β⁺", "positron", "#ffb0d0", x + 15, y, 340, -60),
+          makeEmissionParticle("ν", "electron neutrino", "#d8d8ff", x + 20, y + 10, 280, 60),
+        );
+        logRef.current(
+          `β⁺ DECAY · ${p.isotopeLabel ?? `${p.label}-${mass}`} → ${daughter.symbol}-${mass} + e⁺ + ν`,
+          "#ffb0d0",
         );
       } else {
         particles.current = particles.current.filter((q) => q !== p);
-        logRef.current(`${p.label} decayed away`, "#a8ff8a");
+        logRef.current(`${p.isotopeLabel ?? p.label} decayed away`, "#a8ff8a");
       }
     };
 
@@ -365,6 +546,31 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
 
           const inReactor =
             Math.hypot(a.x - rc.x, a.y - rc.y) < rr && Math.hypot(b.x - rc.x, b.y - rc.y) < rr;
+          const deuteriumTritium =
+            a.label === "H" &&
+            b.label === "H" &&
+            new Set([a.isotopeMass, b.isotopeMass]).size === 2 &&
+            [a.isotopeMass, b.isotopeMass].includes(2) &&
+            [a.isotopeMass, b.isotopeMass].includes(3);
+          const fissionPair =
+            (a.label === "n" && (b.label === "U" || b.label === "Pu") && b.isotopeMass) ||
+            (b.label === "n" && (a.label === "U" || a.label === "Pu") && a.isotopeMass);
+          if (
+            c.fusion &&
+            inReactor &&
+            fissionPair &&
+            ((a.label === "U" && a.isotopeMass === 235) ||
+              (b.label === "U" && b.isotopeMass === 235) ||
+              (a.label === "Pu" && a.isotopeMass === 239) ||
+              (b.label === "Pu" && b.isotopeMass === 239))
+          ) {
+            fission(a.label === "n" ? b : a, a.label === "n" ? a : b);
+            return schedule();
+          }
+          if (c.fusion && inReactor && deuteriumTritium && c.temperature >= FUSION_IGNITION) {
+            fuse(a, b);
+            return schedule();
+          }
           if (react(a, b)) return schedule();
           if (c.fusion && inReactor && a.z > 0 && b.z > 0 && c.temperature >= FUSION_IGNITION) {
             fuse(a, b);

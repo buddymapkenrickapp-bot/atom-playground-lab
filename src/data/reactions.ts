@@ -209,16 +209,44 @@ export type ReactionOutcome =
   | { status: "too-cold"; reaction: Reaction }
   | { status: "inert" };
 
+function isotopeActivation(
+  reaction: Reaction,
+  a: string,
+  b: string,
+  isotopeMassA?: number,
+  isotopeMassB?: number,
+) {
+  const isotopePenalty = ([a, b] as const).reduce((penalty, symbol, index) => {
+    const mass = index === 0 ? isotopeMassA : isotopeMassB;
+    if (!mass) return penalty;
+    const element = BY_SYMBOL[symbol];
+    if (!element) return penalty;
+    const expectedMass = Math.max(1, Math.round(element.z * (element.z < 20 ? 2 : 2.4)));
+    const relativeMass = Math.max(0, (mass - expectedMass) / expectedMass);
+    const hydrogenEffect = symbol === "H" ? Math.max(0, mass - 1) * 140 : 0;
+    return penalty + hydrogenEffect + relativeMass * 80;
+  }, 0);
+  return Math.round(reaction.activation + isotopePenalty);
+}
+
 /**
  * Chemistry gate for a colliding pair at a given temperature.
  * Curated reactions win; otherwise the periodic trends predict the product.
  */
-export function resolveReaction(a: string, b: string, temperature: number): ReactionOutcome {
+export function resolveReaction(
+  a: string,
+  b: string,
+  temperature: number,
+  isotopeMassA?: number,
+  isotopeMassB?: number,
+): ReactionOutcome {
   const curated = findReaction(a, b);
   if (curated) {
-    return temperature >= curated.activation
-      ? { status: "reacts", reaction: curated }
-      : { status: "too-cold", reaction: curated };
+    const activation = isotopeActivation(curated, a, b, isotopeMassA, isotopeMassB);
+    const reaction = activation === curated.activation ? curated : { ...curated, activation };
+    return temperature >= activation
+      ? { status: "reacts", reaction }
+      : { status: "too-cold", reaction };
   }
 
   const bond = predictBond(a, b);
@@ -232,9 +260,11 @@ export function resolveReaction(a: string, b: string, temperature: number): Reac
     effect: bond.effect,
     phase: bond.phase,
   };
-  return temperature >= bond.activation
-    ? { status: "reacts", reaction }
-    : { status: "too-cold", reaction };
+  const activation = isotopeActivation(reaction, a, b, isotopeMassA, isotopeMassB);
+  const isotopeReaction = activation === reaction.activation ? reaction : { ...reaction, activation };
+  return temperature >= activation
+    ? { status: "reacts", reaction: isotopeReaction }
+    : { status: "too-cold", reaction: isotopeReaction };
 }
 
 export const NOBLE_SYMBOLS = ["He", "Ne", "Ar", "Kr", "Xe", "Rn", "Og"];
