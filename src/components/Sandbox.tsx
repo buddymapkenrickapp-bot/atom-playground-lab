@@ -128,7 +128,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       particles.current = list.filter((p) => p !== a && p !== b);
       if (total <= 118) {
         const el = byZ(total)!;
-        const np = makeElementParticle(el, x, y);
+        const np = makeElementParticle(el, x, y, ctrl.current.temperature);
         np.flash = 1.6;
         particles.current.push(np);
         burst(x, y, 1, "#bff7ff");
@@ -140,7 +140,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
         const half = Math.max(1, Math.round(total / 2));
         const p1 = byZ(half)!;
         const p2 = byZ(Math.max(1, total - half > 118 ? 118 : total - half))!;
-        particles.current.push(makeElementParticle(p1, x - 20, y), makeElementParticle(p2, x + 20, y));
+        particles.current.push(makeElementParticle(p1, x - 20, y, ctrl.current.temperature), makeElementParticle(p2, x + 20, y, ctrl.current.temperature));
         burst(x, y, 1, "#ff9a4d");
         logRef.current(
           `FISSION · ${a.label} + ${b.label} exceeded Z=118 → ${p1.symbol} + ${p2.symbol}`,
@@ -201,9 +201,9 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       if (p.z >= 3) {
         const daughter = byZ(p.z - 2)!;
         particles.current = particles.current.filter((q) => q !== p);
-        const np = makeElementParticle(daughter, x, y);
+        const np = makeElementParticle(daughter, x, y, ctrl.current.temperature);
         np.flash = 1.2;
-        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12));
+        particles.current.push(np, makeElementParticle(BY_SYMBOL["He"]!, x + 18, y - 12, ctrl.current.temperature));
         logRef.current(
           `α DECAY · ${p.label} → ${daughter.symbol} + He (alpha particle)`,
           "#a8ff8a",
@@ -436,7 +436,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const el = BY_SYMBOL[symbol];
       if (!el) return;
       if (particles.current.length > 90) particles.current.shift();
-      particles.current.push(makeElementParticle(el, x, y));
+      particles.current.push(makeElementParticle(el, x, y, ctrl.current.temperature));
       logRef.current(
         `Placed ${el.name} (${el.symbol})${el.radioactive ? " · radioactive" : ""}`,
         el.color,
