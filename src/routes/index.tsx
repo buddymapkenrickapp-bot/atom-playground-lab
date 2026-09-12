@@ -34,10 +34,12 @@ function Index() {
   const [gravity, setGravity] = useState(0.35);
   const [pressure, setPressure] = useState(0);
   const [fusion, setFusion] = useState(false);
+  const [temperature, setTemperature] = useState(298);
   const [log, setLog] = useState<LogEntry[]>([]);
   const handleRef = useRef<SandboxHandle | null>(null);
 
-  const controls: Controls = { gravity, pressure, fusion };
+  const controls: Controls = { gravity, pressure, fusion, temperature };
+
 
   const pushLog = (text: string, color: string) =>
     setLog((prev) => [{ id: logId++, text, color }, ...prev].slice(0, 60));
