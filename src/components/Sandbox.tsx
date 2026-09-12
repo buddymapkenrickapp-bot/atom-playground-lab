@@ -149,10 +149,26 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       }
     };
 
+    const coldNotes = new Map<string, number>();
+
     const react = (a: Particle, b: Particle) => {
       if (NOBLE_SYMBOLS.includes(a.label) || NOBLE_SYMBOLS.includes(b.label)) return false;
-      const rx = findReaction(a.label, b.label);
-      if (!rx) return false;
+      const temperature = ctrl.current.temperature;
+      const outcome = resolveReaction(a.label, b.label, temperature);
+      if (outcome.status === "inert") return false;
+      if (outcome.status === "too-cold") {
+        const k = [a.label, b.label].sort().join("+");
+        const now = performance.now();
+        if ((coldNotes.get(k) ?? 0) < now - 6000) {
+          coldNotes.set(k, now);
+          logRef.current(
+            `${a.label} + ${b.label} · no reaction at ${Math.round(temperature)} K · needs ${outcome.reaction.activation} K`,
+            "#7f8ea3",
+          );
+        }
+        return false;
+      }
+      const rx = outcome.reaction;
       const x = (a.x + b.x) / 2;
       const y = (a.y + b.y) / 2;
       const radioactive = a.radioactive || b.radioactive;
@@ -176,6 +192,7 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       logRef.current(`${a.label} + ${b.label} → ${rx.formula} · ${rx.name}`, rx.color);
       return true;
     };
+
 
     const decay = (p: Particle) => {
       const x = p.x;
