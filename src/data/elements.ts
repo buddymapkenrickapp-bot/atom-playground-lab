@@ -85,7 +85,7 @@ function isRadioactive(z: number) {
 }
 
 export const ELEMENTS: ElementInfo[] = RAW.split(";").map((entry, i) => {
-  const [symbol, name] = entry.split(" ");
+  const [symbol, name] = entry.split(" ") as [string, string];
   const z = i + 1;
   const category = categoryFor(z);
   return {

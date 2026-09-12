@@ -242,8 +242,8 @@ export function Sandbox({ selected, controls, onLog, handleRef }: Props) {
       const cur = particles.current;
       for (let i = 0; i < cur.length; i++) {
         for (let j = i + 1; j < cur.length; j++) {
-          const a = cur[i];
-          const b = cur[j];
+          const a = cur[i]!;
+          const b = cur[j]!;
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           const dist = Math.hypot(dx, dy) || 0.001;
